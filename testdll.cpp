@@ -2,6 +2,16 @@
 #include "common.h"
 #include <iostream>
 
+#ifdef WIN32
+#include <windows.h>
+#include <process.h>
+#endif
+
+string getVersion()
+{
+    return string("2.1");
+}
+
 int Init(string ip, string port, string user, string pwd)
 {
 	if (ip.length()<7)
@@ -36,7 +46,16 @@ int Init(string ip, string port, string user, string pwd)
 	g_vec_Vds.clear();
 
 	//启动心跳线程
-    //InitializeCriticalSection(&cs);//初始化临界区
+#ifdef WIN32
+    InitializeCriticalSection(&cs);//初始化临界区
+    HANDLE handl = (HANDLE)_beginthreadex(NULL, 0, HeartBeat, NULL, 0, NULL);
+    if (handl == INVALID_HANDLE_VALUE)
+    {
+        cout<<"开启心跳线程"<<endl;
+        return HEART_THREAD_FAIL;
+    }
+    CloseHandle(handl);
+#else
     pthread_mutex_init(&mutex_lock, NULL);
     pthread_t th;
     int handl = pthread_create(&th, NULL, HeartBeat, NULL);
@@ -45,6 +64,7 @@ int Init(string ip, string port, string user, string pwd)
         cout<<"开启心跳线程失败"<<endl;
 		return HEART_THREAD_FAIL;
 	}
+#endif
 	return OK;
 }
 
@@ -93,44 +113,75 @@ int RegisterRealVedioReq(CallBackFun fun, string& id, string cameraid)
 	cout<<"udp地址："<<pVdInfo->udpURL<<endl;
 	if (ret == OK)	//实时视频调看成功
 	{
+#ifdef WIN32
+        EnterCriticalSection(&cs);
+        g_vec_Vds.push_back(pVdInfo);	//注册成功，将该路视频假如vector
+        LeaveCriticalSection(&cs);
+        //获取视频流
+        HANDLE handl = (HANDLE)_beginthreadex(NULL, 0, ClientListenThread, (void*)pVdInfo, 0, NULL);
+        if (handl == INVALID_HANDLE_VALUE)
+        {
+            cout<<"开启接收视频流线程失败,摄像机编号："<<pVdInfo->cameraid<<" id编号："<<pVdInfo->id<<endl;
+            return RCV_THREAD_FAIL;
+        }
+        CloseHandle(handl);
+#else
         //EnterCriticalSection(&cs);
         pthread_mutex_lock(&mutex_lock);
-		g_vec_Vds.push_back(pVdInfo);	//注册成功，将该路视频假如vector
+        g_vec_Vds.push_back(pVdInfo);	//注册成功，将该路视频假如vector
         //LeaveCriticalSection(&cs);
         pthread_mutex_unlock(&mutex_lock);
-		//获取视频流
+        //获取视频流
         int handl = pthread_create(&pVdInfo->thId, NULL, ClientListenThread, (void*)pVdInfo);
         if (handl != 0)
-		{
-			cout<<"开启接收视频流线程失败,摄像机编号："<<pVdInfo->cameraid<<" id编号："<<pVdInfo->id<<endl;
-			return RCV_THREAD_FAIL;
+        {
+            cout<<"开启接收视频流线程失败,摄像机编号："<<pVdInfo->cameraid<<" id编号："<<pVdInfo->id<<endl;
+            return RCV_THREAD_FAIL;
         }
+#endif
 	}
-
 	return ret;
 }
 
 int UnRegisterRealVedioReq(string id)
 {
+#ifdef WIN32
+    EnterCriticalSection(&cs);
+    for (vector<VedioInfo*>::iterator iter= g_vec_Vds.begin(); iter!=g_vec_Vds.end(); iter++)
+    {
+        if ((*iter)->id == id)
+        {
+            (*iter)->isStop = true;
+            //Sleep(500);			//确保线程退出
+            WaitForSingleObject((*iter)->g_event, 10000);
+            cout<<"注销摄像机:"<<(*iter)->cameraid<<"的视频请求"<<endl;
+            delete (*iter);
+            g_vec_Vds.erase(iter);
+            return OK;
+        }
+    }
+    LeaveCriticalSection(&cs);
+#else
     //EnterCriticalSection(&cs);
     pthread_mutex_lock(&mutex_lock);
-	for (vector<VedioInfo*>::iterator iter= g_vec_Vds.begin(); iter!=g_vec_Vds.end(); iter++)
-	{
-		if ((*iter)->id == id)
-		{
-			(*iter)->isStop = true;
-			//Sleep(500);			//确保线程退出
+    for (vector<VedioInfo*>::iterator iter= g_vec_Vds.begin(); iter!=g_vec_Vds.end(); iter++)
+    {
+        if ((*iter)->id == id)
+        {
+            (*iter)->isStop = true;
+            //Sleep(500);			//确保线程退出
             //WaitForSingleObject((*iter)->g_event, 10000);
             int *thread_ret = NULL;
             pthread_join(((*iter)->thId), (void**)&thread_ret);
-			cout<<"注销摄像机:"<<(*iter)->cameraid<<"的视频请求"<<endl;
-			delete (*iter);
-			g_vec_Vds.erase(iter);
+            cout<<"注销摄像机:"<<(*iter)->cameraid<<"的视频请求"<<endl;
+            delete (*iter);
+            g_vec_Vds.erase(iter);
             break;
-		}
-	}
+        }
+    }
     //LeaveCriticalSection(&cs);
     pthread_mutex_unlock(&mutex_lock);
+#endif
 	return OK;
 }
 
@@ -187,21 +238,32 @@ int RegisterHisVedioReq(CallBackFun fun, string& id, string cameraid, time_t beg
 	ret = GetHisVdWithGsoap(*pVdInfo);
 	if(ret == OK)
 	{
-        //EnterCriticalSection(&cs);
+#ifdef WIN32
+        EnterCriticalSection(&cs);
+        g_vec_Vds.push_back(pVdInfo);	//注册成功，将该路视频加入vector
+        LeaveCriticalSection(&cs);
+
+        //获取视频流
+        HANDLE handl = (HANDLE)_beginthreadex(NULL, 0, HisClientListenThread, (void*)pVdInfo, 0, NULL);
+        if (handl == INVALID_HANDLE_VALUE)
+        {
+            cout<<"开启接收历史视频流线程失败,摄像机编号："<<pVdInfo->cameraid<<" id编号："<<pVdInfo->id<<endl;
+            return RCV_THREAD_FAIL;
+        }
+        CloseHandle(handl);
+#else
         pthread_mutex_lock(&mutex_lock);
-		g_vec_Vds.push_back(pVdInfo);	//注册成功，将该路视频加入vector
-        //LeaveCriticalSection(&cs);
+        g_vec_Vds.push_back(pVdInfo);	//注册成功，将该路视频加入vector
         pthread_mutex_unlock(&mutex_lock);
 
-		//获取视频流
+        //获取视频流
         int handl = pthread_create(&pVdInfo->thId, NULL, HisClientListenThread, (void*)pVdInfo);
         if (handl != 0)
-		{
-			cout<<"开启接收历史视频流线程失败,摄像机编号："<<pVdInfo->cameraid<<" id编号："<<pVdInfo->id<<endl;
-			return RCV_THREAD_FAIL;
-		}
-
-	//	DownloadSaveFiles(*pVdInfo);
+        {
+            cout<<"开启接收历史视频流线程失败,摄像机编号："<<pVdInfo->cameraid<<" id编号："<<pVdInfo->id<<endl;
+            return RCV_THREAD_FAIL;
+        }
+#endif
 	}
 
 	return ret;

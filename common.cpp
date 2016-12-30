@@ -5,36 +5,47 @@
 #include "tinyxml/tinyxml.h"
 #include <cmath>
 #include <strstream>
-//#include <uuid/uuid.h>
+#ifdef WIN32
+#include <objbase.h>
+#else
 #include <curl/curl.h>
 #include <pthread.h>
+#endif
+
 RequestText g_reqText;		//鉴权服务器信息
 vector<VedioInfo*> g_vec_Vds;//视频信息
-//CRITICAL_SECTION cs;
+#ifdef WIN32
+CRITICAL_SECTION cs;
+#else
 pthread_mutex_t   mutex_lock;
 int uuid=0;
+#endif
+
+
 string GetUUID()
 {
-//	GUID guiid;
-//	CoCreateGuid(&guiid);
+#ifdef WIN32
+    GUID guiid;
+    CoCreateGuid(&guiid);
 
-//	//转换成string
-//	char buf[64] = {0};
-//	_snprintf_s(buf,sizeof(buf),
-//		"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-//		guiid.Data1, guiid.Data2, guiid.Data3,
-//		guiid.Data4[0], guiid.Data4[1],
-//		guiid.Data4[2], guiid.Data4[3],
-//		guiid.Data4[4], guiid.Data4[5],
-//		guiid.Data4[6], guiid.Data4[7]);
-    //uuid_t uu;
-    //uuid_generate(uu);
+    //转换成string
+    char buf[64] = {0};
+    _snprintf_s(buf,sizeof(buf),
+        "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        guiid.Data1, guiid.Data2, guiid.Data3,
+        guiid.Data4[0], guiid.Data4[1],
+        guiid.Data4[2], guiid.Data4[3],
+        guiid.Data4[4], guiid.Data4[5],
+        guiid.Data4[6], guiid.Data4[7]);
+    return string(buf);
+#else
     uuid ++;
     strstream ss;
     string s;
     ss<<uuid;
     ss>>s;
     return s;//string((char*)uu);
+#endif
 }
 
 std::string MakeReqXml(RequestText * reqText)
@@ -409,7 +420,11 @@ int ReadConfig()
 	return OK;
 }
 
+#ifdef WIN32
+unsigned __stdcall ClientListenThread(void *pParam)
+#else
 void *ClientListenThread(void *pParam)
+#endif
 {
 	std::cout<<"thread begin"<<std::endl;
 	VedioInfo * pvd = (VedioInfo*)pParam;
@@ -433,7 +448,11 @@ void *ClientListenThread(void *pParam)
 
 	int nRet=0;
 	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef WIN32
+    if( sock == INVALID_SOCKET )
+#else
     if( sock == -1 )
+#endif
 	{
 		cout<<"NET_HB_NOSOCK"<<endl;
 		return 0;
@@ -492,7 +511,11 @@ void *ClientListenThread(void *pParam)
 
 
 	//开始接收
+#ifdef WIN32
+    SOCKADDR_IN from;
+#else
     sockaddr_in  from;
+#endif
     int recvlen;
 	char buf[2000]={0};
     socklen_t fromlen = sizeof(from);
@@ -523,7 +546,11 @@ void *ClientListenThread(void *pParam)
 		
 		}
 	}
+#ifdef WIN32
+    closesocket(sock);
+#else
     close(sock);
+#endif
 
 #ifdef RealSend
 	closesocket(s_send);
@@ -547,14 +574,20 @@ void *HisClientListenThread(void *pParam)
 	DownloadSaveFiles(*pvd);
 	return 0;
 }
-
+#ifdef WIN32
+unsigned __stdcall HeartBeat(void *pParam)
+#else
 void *HeartBeat(void *pParam)
+#endif
 {
 	while (true)
 	{
 		struct soap rsoap;
-        //EnterCriticalSection(&cs);
+#ifdef WIN32
+        EnterCriticalSection(&cs);
+#else
         pthread_mutex_lock(&mutex_lock);
+#endif
 		for (int i=0;i<g_vec_Vds.size();i++)
 		{
 			if (g_vec_Vds[i]->isHis)
@@ -590,9 +623,14 @@ void *HeartBeat(void *pParam)
 			soap_end(&rsoap);
 			soap_done(&rsoap);
 		}
-        //LeaveCriticalSection(&cs);
+#ifdef WIN32
+        LeaveCriticalSection(&cs);
+        Sleep(300*1000);	//五分钟一次
+#else
         pthread_mutex_unlock(&mutex_lock);
         sleep(300);	//五分钟一次
+#endif
+
 	}
 	
 	return 0;
@@ -764,90 +802,92 @@ int NalFrame(unsigned int& ts_current, unsigned short& seq_num, unsigned char* s
 }
 
 //下载文件并保存为新文件名
-//bool DownloadSaveFiles(VedioInfo &hisVd)
-//{
-//	for (int i=0; i<hisVd.hisInfos.size();i++)
-//	{
-//		if (hisVd.isStop)
-//		{
-//			break;
-//		}
-//		HINTERNET hSession = InternetOpenA("RookIE/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-//		if (hSession != NULL)
-//		{
-//			HINTERNET handle2 = InternetOpenUrlA(hSession, hisVd.hisInfos[i].url.c_str(), NULL, 0, INTERNET_FLAG_DONT_CACHE, 0);
-//			if (handle2 != NULL)
-//			{
-//				byte *Temp = new byte[MAX_READ_BUF];
-//				ULONG Number = 1;
-//				bool NeedHalf = FALSE;
-//				int nextpos = 0;
-//				int halflen = 0;
-//				char *OneFrameBuf = new char[MAX_FRAME_SIZE];
-//				unsigned int ts_current=0;
-//				unsigned short seq_num=0;
-//				unsigned char sendbuf[1500];
+#ifdef WIN32
+bool DownloadSaveFiles(VedioInfo &hisVd)
+{
+    for (int i=0; i<hisVd.hisInfos.size();i++)
+    {
+        if (hisVd.isStop)
+        {
+            break;
+        }
+        HINTERNET hSession = InternetOpenA("RookIE/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+        if (hSession != NULL)
+        {
+            HINTERNET handle2 = InternetOpenUrlA(hSession, hisVd.hisInfos[i].url.c_str(), NULL, 0, INTERNET_FLAG_DONT_CACHE, 0);
+            if (handle2 != NULL)
+            {
+                byte *Temp = new byte[MAX_READ_BUF];
+                ULONG Number = 1;
+                bool NeedHalf = FALSE;
+                int nextpos = 0;
+                int halflen = 0;
+                char *OneFrameBuf = new char[MAX_FRAME_SIZE];
+                unsigned int ts_current=0;
+                unsigned short seq_num=0;
+                unsigned char sendbuf[1500];
 
-//				while (Number > 0 && !hisVd.isStop)
-//				{
-//					InternetReadFile(handle2, Temp, MAX_READ_BUF - 1, &Number);
-//					if (Number<4)
-//					{
-//						cout<<"收到历史视频数据小于4"<<endl;
-//						break;
-//					}
-//					incCpu();
-//					for (int i=0; i<Number; i++)
-//					{
-//						if (hisVd.isStop)
-//						{
-//							cout<<"历史视频已注销，摄像机id:"<<hisVd.cameraid<<" id="<<hisVd.id<<endl;
-//							break;
-//						}
-//						if (Temp[i] == 0x00 && Temp[i+1] == 0x00 && Temp[i+2] == 0x00 && Temp[i+3] == 0x01)//找到ps包头
-//						{
-//							//前面的部分为上一帧数据
-//							if (i != 0 && NeedHalf)
-//							{
-//								NeedHalf = FALSE;
-//								NalFrame(ts_current, seq_num, Temp, i, FALSE, halflen,OneFrameBuf, sendbuf, hisVd);
-//								//Sleep(30);
-//							}
+                while (Number > 0 && !hisVd.isStop)
+                {
+                    InternetReadFile(handle2, Temp, MAX_READ_BUF - 1, &Number);
+                    if (Number<4)
+                    {
+                        cout<<"收到历史视频数据小于4"<<endl;
+                        break;
+                    }
+                    incCpu();
+                    for (int i=0; i<Number; i++)
+                    {
+                        if (hisVd.isStop)
+                        {
+                            cout<<"历史视频已注销，摄像机id:"<<hisVd.cameraid<<" id="<<hisVd.id<<endl;
+                            break;
+                        }
+                        if (Temp[i] == 0x00 && Temp[i+1] == 0x00 && Temp[i+2] == 0x00 && Temp[i+3] == 0x01)//找到ps包头
+                        {
+                            //前面的部分为上一帧数据
+                            if (i != 0 && NeedHalf)
+                            {
+                                NeedHalf = FALSE;
+                                NalFrame(ts_current, seq_num, Temp, i, FALSE, halflen,OneFrameBuf, sendbuf, hisVd);
+                                //Sleep(30);
+                            }
 
-//							//查找下一个包头
-//							for (nextpos = i+5; nextpos <	Number; nextpos++)
-//							{
-//								if (Temp[nextpos] == 0x00 && Temp[nextpos+1] == 0x00 && Temp[nextpos+2] == 0x00 && Temp[nextpos+3] == 0x01 )//找到了
-//								{
-//									NalFrame(ts_current, seq_num, Temp+i, nextpos-i, TRUE, halflen,OneFrameBuf, sendbuf, hisVd);
-//								//Sleep(30);
-//								break;
-//								}
-//								else if (nextpos == Number-4 )//没找到，剩下的全为一个ps包
-//								{
-//									NeedHalf = TRUE;
-//									NalFrame(ts_current, seq_num, Temp+i, Number-i, FALSE, halflen,OneFrameBuf, sendbuf, hisVd);
-//									break;
-//								}
-//							}
-//						}
-//					}
-//					//hisVd.callbackFun(hisVd.id, hisVd.cameraid, (char*)Temp, Number);
-//				}
-//				delete Temp;
-//				delete OneFrameBuf;
-//				InternetCloseHandle(handle2);
-//				handle2 = NULL;
-//			}
-//			InternetCloseHandle(hSession);
-//			hSession = NULL;
-//		}
-//	}
-//	hisVd.isStop = true;	//播放完毕
-//	cout<<"历史视频播放结束，摄像机id:"<<hisVd.cameraid<<" id="<<hisVd.id<<endl;
-//	SetEvent(hisVd.thId);
-//	return true;
-//}
+                            //查找下一个包头
+                            for (nextpos = i+5; nextpos <	Number; nextpos++)
+                            {
+                                if (Temp[nextpos] == 0x00 && Temp[nextpos+1] == 0x00 && Temp[nextpos+2] == 0x00 && Temp[nextpos+3] == 0x01 )//找到了
+                                {
+                                    NalFrame(ts_current, seq_num, Temp+i, nextpos-i, TRUE, halflen,OneFrameBuf, sendbuf, hisVd);
+                                //Sleep(30);
+                                break;
+                                }
+                                else if (nextpos == Number-4 )//没找到，剩下的全为一个ps包
+                                {
+                                    NeedHalf = TRUE;
+                                    NalFrame(ts_current, seq_num, Temp+i, Number-i, FALSE, halflen,OneFrameBuf, sendbuf, hisVd);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    //hisVd.callbackFun(hisVd.id, hisVd.cameraid, (char*)Temp, Number);
+                }
+                delete Temp;
+                delete OneFrameBuf;
+                InternetCloseHandle(handle2);
+                handle2 = NULL;
+            }
+            InternetCloseHandle(hSession);
+            hSession = NULL;
+        }
+    }
+    hisVd.isStop = true;	//播放完毕
+    cout<<"历史视频播放结束，摄像机id:"<<hisVd.cameraid<<" id="<<hisVd.id<<endl;
+    SetEvent(hisVd.thId);
+    return true;
+}
+#else
 size_t write_data(void *ptr, size_t nmemb, size_t Number, void *stream)
 {
 
@@ -939,6 +979,8 @@ bool DownloadSaveFiles(VedioInfo &hisVd)
     }
     hisVd.isStop = true;	//播放完毕
 }
+#endif
+
 
 void incCpu()
 {

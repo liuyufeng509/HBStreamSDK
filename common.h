@@ -164,19 +164,32 @@ typedef struct
 	unsigned char marker:1;			/**//* expect 1 */
 	/**//* bytes 2, 3 */
 	unsigned short seq_no;
-	/**//* bytes 4-7 */
+
+#ifdef WIN32
+    /**//* bytes 4-7 */
+    unsigned long timestamp;
+    /**//* bytes 8-11 */
+    unsigned long ssrc;            /**//* stream number is used here. */
+#else
+    /**//* bytes 4-7 */
     unsigned int timestamp;
-	/**//* bytes 8-11 */
+    /**//* bytes 8-11 */
     unsigned int ssrc;            /**//* stream number is used here. */
+#endif
+
 } RTP_FIXED_HEADER;
 
 
 
 extern vector<VedioInfo*> g_vec_Vds;
 extern RequestText g_reqText;		//鉴权服务器信息
-//extern CRITICAL_SECTION cs;
+#ifdef WIN32
+extern CRITICAL_SECTION cs;
+#else
 extern pthread_mutex_t   mutex_lock;
 extern int uuid;
+#endif
+
 int ReadConfig();	//读取鉴权服务器等信息
 string GetUUID();	//获取uuid,标识唯一一路摄像机
 
@@ -193,10 +206,16 @@ void *MulTranUni(void *arg);
 int DestorySoap(struct soap * soap);
 
 bool DownloadSaveFiles(VedioInfo &hisVd);
-
+#ifdef WIN32
+unsigned __stdcall ClientListenThread(void *pParam);
+unsigned __stdcall HisClientListenThread(void *pParam);
+unsigned __stdcall HeartBeat(void *pParam);
+#else
 void * ClientListenThread(void *pParam);
 void * HisClientListenThread(void *pParam);
 void * HeartBeat(void *pParam);
+#endif
+
 int NalFrame(unsigned int& ts_current, unsigned short& seq_num, unsigned char* src, int len, bool isFramem, int& halflen, char* OneFrameBuf, unsigned char* sendbuf, VedioInfo &vdInfo);
 int GetRtp(int srclen,char* OneFrameBuf, unsigned short& seq_num, unsigned int& ts_current, unsigned char* sendbuf, VedioInfo &vdInfo);
 void incCpu();
